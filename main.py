@@ -1,7 +1,7 @@
 import datetime
 from typing import Dict
 from fastapi import FastAPI
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 import uvicorn
 from sqlmodel import SQLModel, Session
 from starlette.middleware.cors import CORSMiddleware
@@ -31,7 +31,7 @@ class AuctionConnectionManager:
     async def connect(self, websocket: WebSocket, auction_id):
         await websocket.accept()
         item_found = session.get(AuctionItem, auction_id)
-        print(item_found)
+        #print(item_found)
         if (item_found.ends and item_found.ends < datetime.datetime.now()) \
                 or item_found.completed:
             item_found.completed = True
@@ -62,7 +62,7 @@ class AuctionConnectionManager:
         if cur_price:
             await websocket.send_json({'new_price': cur_price})
         if json_data:
-            print(json_data)
+            #print(json_data)
             await websocket.send_json({'json_data': json_data})
 
     async def broadcast(self, message: str, auction_id: int, new_price=None, ends=None):
@@ -86,6 +86,14 @@ async def auction(id: int):
     return {'item': auction_item}
 
 
+@app.get('/auctions/', status_code=HTTP_200_OK)
+async def auctions():
+    au = select(AuctionItem)
+    auction_items = session.execute(au).all()
+    auction_items = [i["AuctionItem"] for i in auction_items]
+    return auction_items
+
+
 @app.websocket('/auction/{id}/ws/{participant_id}')
 async def auction(websocket: WebSocket, id: int, participant_id: int):
     await manager.connect(websocket, id)
@@ -95,17 +103,15 @@ async def auction(websocket: WebSocket, id: int, participant_id: int):
             item = session.get(AuctionItem, id)
             step = item.price_step | 0
             current_bid = item.bid or 0
-            min_new_bid = current_bid + step
+            min_new_bid = current_bid + step if current_bid != item.min_price else current_bid
             new_bid = data.get('bid')
-
             if not new_bid:
                 print(1)
                 continue
             if participant_id == item.bidder_id or not new_bid > current_bid:
                 print(2)
                 continue
-            if item.min_price < new_bid >= min_new_bid:
-                print(new_bid)
+            if item.min_price <= new_bid >= min_new_bid:
                 item.bid = new_bid
                 item.bidder_id = participant_id
                 item.ends = datetime.datetime.now() + datetime.timedelta(seconds=60)
